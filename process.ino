@@ -38,32 +38,49 @@ float VmSignSet[3][4] = {
 };
 // モーター4つ分の出力を計算して格納する
 float motorPower[4];
-float mostStrongestPower = 0.0f;
+const float MaxWheelPower = 50.0f;
+
+// スティック量を出力へ変換する。車輪へ分配する前に適用する。
+float wheelInputPower(float magnitude) {
+  return powf(min(100.0f, magnitude), 1.8f) / 48.0f;
+}
+
 void updateMotorPower(float ly, float lx, float rx) {
-  if (abs(ly) <= RejectLine) ly = 0.0f; if (abs(lx) <= RejectLine) lx = 0.0f; if (abs(rx) <= RejectLine) rx = 0.0f;
-  mostStrongestPower = 0.0f;
-  bool isNegative [4];
-  for(int i=0; i<4; i++) {
+  // 移動方向によらず同じ倒し量で動き始める円形デッドゾーン。
+  float length = sqrtf(lx * lx + ly * ly);
+  if (length <= RejectLine) {
+    lx = 0.0f;
+    ly = 0.0f;
+  } else {
+    float scale = wheelInputPower(length) / length;
+    lx *= scale;
+    ly *= scale;
+  }
+
+  // 回転は独立した入力として変換してから並進に加える。
+  if (fabsf(rx) <= RejectLine) {
+    rx = 0.0f;
+  } else {
+    rx = (rx < 0.0f ? -1.0f : 1.0f) * wheelInputPower(fabsf(rx));
+  }
+
+  float mostStrongestPower = 0.0f;
+  for (int i = 0; i < 4; i++) {
     motorPower[i] = (VmSignSet[0][i] * ly) + (VmSignSet[1][i] * lx) + (VmSignSet[2][i] * rx);
     motorPower[i] = motorPower[i] * Gain[i] + Offset[i];
-    motorPower[i] = min(100, motorPower[i]);
-    isNegative[i] = (motorPower[i] < 0);
-    motorPower[i] = pow(abs(motorPower[i]), 1.8) / 48.0;
-    if (isNegative[i] == true){
-      motorPower[i] = -motorPower[i];
-    }
-    mostStrongestPower = max(mostStrongestPower, abs(motorPower[i]));
+    mostStrongestPower = max(mostStrongestPower, fabsf(motorPower[i]));
   }
-}
-void Wheel(void){
-  updateMotorPower(AS_LeftY, AS_LeftX, AS_RightX);
-  // ====== SPEED CONFIG ===== //
-  float Rate = 50.0f / mostStrongestPower; // Rate = (Speed) / mostStrongestPower; Speed部分の数字を調節することで出力を制限可能。
 
-  if (Rate > 1.0f) Rate = 1.0f;
+  // 正負共通の上限。全輪の比率を維持し、停止時は除算しない。
+  float rate = 1.0f;
+  if (mostStrongestPower > MaxWheelPower) {
+    rate = MaxWheelPower / mostStrongestPower;
+    for (int i = 0; i < 4; i++) {
+      motorPower[i] *= rate;
+    }
+  }
   // Serial.print("Rate: ");
-  // Serial.print(Rate);
-  for (int i=0; i<4; i++){ motorPower[i] *= Rate; }
+  // Serial.print(rate);
   // Serial.print(", A: ");
   // Serial.print(motorPower[0]);
   // Serial.print(", B: ");
@@ -72,6 +89,10 @@ void Wheel(void){
   // Serial.print(motorPower[2]);
   // Serial.print(", D: ");
   // Serial.println(motorPower[3]);
+}
+
+void Wheel(void) {
+  updateMotorPower(AS_LeftY, AS_LeftX, AS_RightX);
   MotorON(WHEEL_A, motorPower[0]); // OMNI - A
   MotorON(WHEEL_B, motorPower[1]); // OMNI - B
   MotorON(WHEEL_C, motorPower[2]); // OMNI - C
